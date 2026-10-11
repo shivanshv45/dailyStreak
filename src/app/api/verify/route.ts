@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth/server";
 import { prisma } from "@/lib/db/prisma";
 import { verifyProof } from "@/lib/verify";
-import { localDateFor, todayKeyFor } from "@/lib/date";
+import { localDateFor, periodStartDate, specFor, todayKeyFor } from "@/lib/date";
+import { cadenceScope } from "@/lib/frequency";
 
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const MAX_ATTEMPTS_PER_DAY = 10;
@@ -41,11 +42,11 @@ export async function POST(request: NextRequest) {
   const today = localDateFor(timezone);
   const todayKey = todayKeyFor(timezone);
 
-  const existingCheckIn = await prisma.checkIn.findUnique({
-    where: { taskId_date: { taskId, date: today } },
+  const existingCheckIn = await prisma.checkIn.findFirst({
+    where: { taskId, date: { gte: periodStartDate(timezone, specFor(task, timezone)) } },
   });
   if (existingCheckIn) {
-    return NextResponse.json({ error: "Already checked in today" }, { status: 400 });
+    return NextResponse.json({ error: `Already done ${cadenceScope(task).toLowerCase()}` }, { status: 400 });
   }
 
   const attemptsToday = await prisma.verifyAttempt.count({

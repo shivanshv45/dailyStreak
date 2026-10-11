@@ -1,24 +1,14 @@
-type SparklineProps = {
-  values: number[];
-  color: string;
-};
-
-export function Sparkline({ values, color }: SparklineProps) {
-  const width = 100;
-  const height = 24;
-  const max = 100;
-
-  const points = values
-    .map((v, i) => {
-      const x = (i / Math.max(values.length - 1, 1)) * width;
-      const y = height - (v / max) * height;
-      return `${x},${y}`;
-    })
-    .join(" ");
+export function Sparkline({ values, color }: { values: number[]; color: string }) {
+  const w = 200;
+  const h = 36;
+  const pts = values.map((v, i) => [(i / Math.max(values.length - 1, 1)) * w, h - 2 - (v / 100) * (h - 4)]);
+  const line = pts.map(([x, y]) => `${x},${y}`).join(" ");
+  const area = `0,${h} ${line} ${w},${h}`;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-6 w-24" preserveAspectRatio="none">
-      <polyline points={points} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-9 w-full" aria-hidden>
+      <polygon points={area} fill={color} opacity={0.12} />
+      <polyline points={line} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

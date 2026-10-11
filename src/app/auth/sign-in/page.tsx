@@ -1,63 +1,99 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { signIn } from "../actions";
+import { useRouter } from "next/navigation";
+import { authClient } from "@/lib/auth/client";
+import { saveTimezoneForCurrentUser } from "@/app/auth/actions";
+import { AuthCard, AuthFrame, CodeForm, GoogleButton, OrDivider } from "../AuthFrame";
 
 export default function SignInPage() {
+  const router = useRouter();
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
 
-  function handleSubmit(formData: FormData) {
+  async function handleSignIn(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const emailValue = String(formData.get("email") ?? "");
+    const password = String(formData.get("password") ?? "");
+
     setError(null);
-    startTransition(async () => {
-      const result = await signIn(formData);
-      if (result?.error) setError(result.error);
-    });
+    setIsPending(true);
+    try {
+      const { error: signInError } = await authClient.signIn.email({ email: emailValue, password });
+      if (signInError) {
+        if (signInError.code === "EMAIL_NOT_VERIFIED") {
+          setEmail(emailValue);
+          await authClient.emailOtp.sendVerificationOtp({ email: emailValue, type: "email-verification" });
+          setNeedsVerification(true);
+        } else {
+          setError(signInError.message ?? "Sign in failed");
+        }
+        return;
+      }
+      router.push("/");
+      router.refresh();
+    } finally {
+      setIsPending(false);
+    }
+  }
+
+  async function handleVerify(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    setIsPending(true);
+    try {
+      const { error: verifyError } = await authClient.emailOtp.verifyEmail({ email, otp: code });
+      if (verifyError) {
+        setError(verifyError.message ?? "Invalid code");
+        return;
+      }
+      await saveTimezoneForCurrentUser(Intl.DateTimeFormat().resolvedOptions().timeZone);
+      router.push("/");
+      router.refresh();
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-neutral-950 px-4">
-      <form
-        action={handleSubmit}
-        className="w-full max-w-sm rounded-2xl border border-neutral-800 bg-neutral-900 p-8 shadow-xl"
-      >
-        <h1 className="mb-6 text-2xl font-semibold text-white">Welcome back</h1>
-
-        <div className="space-y-4">
-          <input
-            name="email"
-            type="email"
-            placeholder="Email"
-            required
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 outline-none focus:border-indigo-500"
+    <AuthFrame>
+      {needsVerification ? (
+        <AuthCard title="Verify your email">
+          <CodeForm
+            email={email}
+            code={code}
+            setCode={setCode}
+            error={error}
+            isPending={isPending}
+            onSubmit={handleVerify}
+            onResend={() => authClient.emailOtp.sendVerificationOtp({ email, type: "email-verification" })}
           />
-          <input
-            name="password"
-            type="password"
-            placeholder="Password"
-            required
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-white placeholder-neutral-500 outline-none focus:border-indigo-500"
-          />
-        </div>
-
-        {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
-
-        <button
-          type="submit"
-          disabled={isPending}
-          className="mt-6 w-full rounded-lg bg-indigo-500 py-2.5 font-medium text-white transition hover:bg-indigo-400 disabled:opacity-50"
-        >
-          {isPending ? "Signing in..." : "Sign in"}
-        </button>
-
-        <p className="mt-4 text-center text-sm text-neutral-400">
-          No account yet?{" "}
-          <Link href="/auth/sign-up" className="text-indigo-400 hover:underline">
-            Sign up
-          </Link>
-        </p>
-      </form>
-    </main>
+        </AuthCard>
+      ) : (
+        <AuthCard title="Welcome back">
+          <GoogleButton onClick={() => authClient.signIn.social({ provider: "google", callbackURL: "/" })} />
+          <OrDivider />
+          <form onSubmit={handleSignIn} className="space-y-3">
+            <input name="email" type="email" placeholder="Email" required autoComplete="email" className="input" />
+            <input name="password" type="password" placeholder="Password" required autoComplete="current-password" className="input" />
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <button type="submit" disabled={isPending} className="btn-ink mt-2 w-full py-3">
+              {isPending ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
+          <p className="mt-5 text-center text-sm text-muted">
+            New here?{" "}
+            <Link href="/auth/sign-up" className="font-semibold text-ink underline decoration-pink decoration-2 underline-offset-4">
+              Create an account
+            </Link>
+          </p>
+        </AuthCard>
+      )}
+    </AuthFrame>
   );
 }

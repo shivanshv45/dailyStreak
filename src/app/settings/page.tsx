@@ -1,68 +1,75 @@
-import Link from "next/link";
-import { auth } from "@/lib/auth/server";
+import { requireAppContext, getShellTasks } from "@/lib/session";
+import { AppShell } from "@/components/shell/AppShell";
+import { signOut } from "@/app/auth/actions";
 import { prisma } from "@/lib/db/prisma";
-import { updateTimezone } from "./actions";
+import { TimezoneField } from "./TimezoneField";
+import { ArchivedTasks, type ArchivedTask } from "./ArchivedTasks";
 
 export const instant = false;
 
-const COMMON_TIMEZONES = [
-  "UTC",
-  "America/New_York",
-  "America/Los_Angeles",
-  "America/Chicago",
-  "Europe/London",
-  "Europe/Berlin",
-  "Asia/Kolkata",
-  "Asia/Tokyo",
-  "Asia/Shanghai",
-  "Australia/Sydney",
-];
-
 export default async function SettingsPage() {
-  const { data: session } = await auth.getSession();
-  if (!session?.user) return null;
-
-  const profile = await prisma.profile.upsert({
-    where: { userId: session.user.id },
-    update: {},
-    create: { userId: session.user.id },
-  });
-
-  const options = COMMON_TIMEZONES.includes(profile.timezone)
-    ? COMMON_TIMEZONES
-    : [profile.timezone, ...COMMON_TIMEZONES];
+  const { user, timezone } = await requireAppContext();
+  const [shellTasks, archivedRaw] = await Promise.all([
+    getShellTasks(user.id, timezone),
+    prisma.task.findMany({
+      where: { userId: user.id, archivedAt: { not: null } },
+      select: { id: true, title: true, emoji: true, color: true, archivedAt: true, _count: { select: { checkIns: true } } },
+      orderBy: { archivedAt: "desc" },
+    }),
+  ]);
+  const zones = Intl.supportedValuesOf("timeZone");
+  const dateFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: timezone });
+  const archived: ArchivedTask[] = archivedRaw.map((t) => ({
+    id: t.id,
+    title: t.title,
+    emoji: t.emoji,
+    color: t.color,
+    checkInCount: t._count.checkIns,
+    archivedLabel: dateFmt.format(t.archivedAt!),
+  }));
 
   return (
-    <main className="min-h-screen bg-neutral-950 px-6 py-10 text-white">
-      <div className="mx-auto max-w-md">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">Settings</h1>
-          <Link href="/" className="text-sm text-neutral-400 hover:text-white">
-            Board
-          </Link>
+    <AppShell active="settings" user={user} tasks={shellTasks} timezone={timezone}>
+      <div className="mx-auto max-w-2xl px-4 pt-5 md:px-10 md:pt-7">
+        <p className="text-xs text-muted">
+          Profile <span className="mx-1 text-faint">/</span> <span className="text-ink">Settings</span>
+        </p>
+        <h1 className="mt-4 font-display text-4xl font-extrabold tracking-tight">Settings</h1>
+
+        <div className="mt-8 divide-y divide-line rounded-2xl border border-line bg-surface">
+          <Row label="Name">
+            <span className="text-sm">{user.name || "—"}</span>
+          </Row>
+          <Row label="Email">
+            <span className="text-sm">{user.email}</span>
+          </Row>
+          <Row label="Timezone">
+            <TimezoneField saved={timezone} zones={zones} />
+          </Row>
+          <Row label="Session">
+            <form action={signOut}>
+              <button className="rounded-full border border-line px-4 py-1.5 text-sm hover:border-line-strong">Sign out</button>
+            </form>
+          </Row>
         </div>
 
-        <form action={updateTimezone} className="mt-6 space-y-3">
-          <label className="block text-sm text-neutral-400">Timezone</label>
-          <select
-            name="timezone"
-            defaultValue={profile.timezone}
-            className="w-full rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 text-white outline-none focus:border-indigo-500"
-          >
-            {options.map((tz) => (
-              <option key={tz} value={tz}>
-                {tz}
-              </option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-400"
-          >
-            Save
-          </button>
-        </form>
+        <div className="mt-10 flex items-center gap-2">
+          <span className="field-label">Archived tasks</span>
+          <span className="text-xs font-semibold text-muted">{archived.length}</span>
+        </div>
+        <div className="mt-3 rounded-2xl border border-line bg-surface">
+          <ArchivedTasks tasks={archived} />
+        </div>
       </div>
-    </main>
+    </AppShell>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-1 gap-2 px-5 py-4 sm:grid-cols-[120px_1fr] sm:items-center">
+      <span className="field-label">{label}</span>
+      <div className="min-w-0">{children}</div>
+    </div>
   );
 }

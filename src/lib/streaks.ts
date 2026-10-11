@@ -1,65 +1,93 @@
-import { addDaysToKey, dateKeyOf, todayKeyFor } from "./date";
+import { dateKeyOf, periodKeyOf, previousPeriodKey, todayKeyFor, type PeriodSpec } from "./date";
+import { cadenceDays } from "./frequency";
 
 export type CheckInLike = { date: Date };
 
-/** Current consecutive-day streak. An unfinished today doesn't break it. */
-export function currentStreak(checkIns: CheckInLike[], timezone: string): number {
-  const doneDates = new Set(checkIns.map((c) => dateKeyOf(c.date)));
-  const todayKey = todayKeyFor(timezone);
+function donePeriods(checkIns: CheckInLike[], spec: PeriodSpec): Set<string> {
+  return new Set(checkIns.map((c) => periodKeyOf(dateKeyOf(c.date), spec)));
+}
 
-  let cursor = doneDates.has(todayKey) ? todayKey : addDaysToKey(todayKey, -1);
+/** Consecutive periods done, counting back from now. An unfinished current period doesn't break it. */
+export function currentStreak(checkIns: CheckInLike[], timezone: string, spec: PeriodSpec, at: Date = new Date()): number {
+  const done = donePeriods(checkIns, spec);
+  const current = periodKeyOf(todayKeyFor(timezone, at), spec);
+
+  let cursor = done.has(current) ? current : previousPeriodKey(current, spec);
   let streak = 0;
-
-  while (doneDates.has(cursor)) {
+  while (done.has(cursor)) {
     streak += 1;
-    cursor = addDaysToKey(cursor, -1);
+    cursor = previousPeriodKey(cursor, spec);
   }
-
   return streak;
 }
 
-/** Longest consecutive-day streak across all history. */
-export function longestStreak(checkIns: CheckInLike[]): number {
-  const dateKeys = checkIns.map((c) => dateKeyOf(c.date)).sort();
-  if (dateKeys.length === 0) return 0;
+export function longestStreak(checkIns: CheckInLike[], spec: PeriodSpec): number {
+  const keys = [...donePeriods(checkIns, spec)].sort();
+  if (keys.length === 0) return 0;
 
   let longest = 1;
-  let current = 1;
-
-  for (let i = 1; i < dateKeys.length; i++) {
-    if (dateKeys[i] === dateKeys[i - 1]) continue;
-    if (addDaysToKey(dateKeys[i - 1], 1) === dateKeys[i]) {
-      current += 1;
-    } else {
-      current = 1;
-    }
-    longest = Math.max(longest, current);
+  let run = 1;
+  for (let i = 1; i < keys.length; i++) {
+    run = previousPeriodKey(keys[i], spec) === keys[i - 1] ? run + 1 : 1;
+    longest = Math.max(longest, run);
   }
-
   return longest;
 }
 
-/** Completion % over the last N days, counting only days on/after task creation. */
+export function windowPeriods(days: number, spec: PeriodSpec): number {
+  if (spec.frequency === "DAILY") return days;
+  return Math.max(spec.frequency === "WEEKLY" ? 1 : 3, Math.ceil(days / cadenceDays(spec)));
+}
+
+/** Completion % over a recent window. Periods before the task existed are skipped; the current period only counts once it's done. */
 export function completionRate(
   checkIns: CheckInLike[],
   timezone: string,
   createdAt: Date,
   days: number,
+  spec: PeriodSpec,
+  at: Date = new Date(),
 ): number {
-  const doneDates = new Set(checkIns.map((c) => dateKeyOf(c.date)));
-  const todayKey = todayKeyFor(timezone);
-  const createdKey = todayKeyFor(timezone, createdAt);
+  return completionDetail(checkIns, timezone, createdAt, days, spec, at).pct;
+}
 
+/** Same as completionRate, plus how many periods it was based on, so callers can tell "0%" from "no history yet". */
+export function completionDetail(
+  checkIns: CheckInLike[],
+  timezone: string,
+  createdAt: Date,
+  days: number,
+  spec: PeriodSpec,
+  at: Date = new Date(),
+): { pct: number; eligible: number } {
+  const done = donePeriods(checkIns, spec);
+  const createdKey = periodKeyOf(todayKeyFor(timezone, createdAt), spec);
+
+  let cursor = periodKeyOf(todayKeyFor(timezone, at), spec);
   let eligible = 0;
-  let done = 0;
-  let cursor = todayKey;
+  let hit = 0;
 
-  for (let i = 0; i < days; i++) {
+  for (let i = 0; i < windowPeriods(days, spec); i++) {
     if (cursor < createdKey) break;
-    eligible += 1;
-    if (doneDates.has(cursor)) done += 1;
-    cursor = addDaysToKey(cursor, -1);
+    const isDone = done.has(cursor);
+    if (i > 0 || isDone) {
+      eligible += 1;
+      if (isDone) hit += 1;
+    }
+    cursor = previousPeriodKey(cursor, spec);
   }
 
-  return eligible === 0 ? 0 : Math.round((done / eligible) * 100);
+  return { pct: eligible === 0 ? 0 : Math.round((hit / eligible) * 100), eligible };
+}
+
+/** 0/100 per period for the last `count` periods, oldest first. */
+export function periodSeries(checkIns: CheckInLike[], timezone: string, spec: PeriodSpec, count: number, at: Date = new Date()): number[] {
+  const done = donePeriods(checkIns, spec);
+  let cursor = periodKeyOf(todayKeyFor(timezone, at), spec);
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) {
+    out.unshift(done.has(cursor) ? 100 : 0);
+    cursor = previousPeriodKey(cursor, spec);
+  }
+  return out;
 }

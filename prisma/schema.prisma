@@ -11,6 +11,13 @@ enum TaskMode {
   PROOF
 }
 
+enum Frequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  CUSTOM
+}
+
 enum CheckInStatus {
   DONE
   VERIFIED
@@ -36,6 +43,8 @@ model Task {
   description  String?
   doneCriteria String?
   mode         TaskMode
+  frequency    Frequency @default(DAILY)
+  intervalDays Int?
   color        String    @default("#6366f1")
   emoji        String?
   archivedAt   DateTime?
