@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# full-size originals of the generated art (kept locally, ~55 MB)
+/assets-src
